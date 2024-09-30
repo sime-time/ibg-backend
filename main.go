@@ -12,6 +12,10 @@ import (
 	"github.com/stripe/stripe-go/v79"
 )
 
+type CheckoutData struct {
+	ClientSecret string `json:"client_secret"`
+}
+
 func main() {
 	app := pocketbase.New()
 
@@ -22,7 +26,7 @@ func main() {
 	}
 	stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 
-	// set route: hello example
+	// route: hello example
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.GET("/hello/:name", func(c echo.Context) error {
 			name := c.PathParam("name")
@@ -32,26 +36,9 @@ func main() {
 		return nil
 	})
 
-	// set route: public keys handler
-	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		e.Router.GET("/public-keys", publicKeysHandler)
-		return nil
-	})
-
 	// start pocketbase server
 	app_err := app.Start()
 	if app_err != nil {
 		log.Fatal(app_err)
 	}
-}
-
-type PublicKeyParams struct {
-	StripeKey string `json:"key"`
-}
-
-func publicKeysHandler(c echo.Context) (err error) {
-	data := PublicKeyParams{
-		StripeKey: os.Getenv("STRIPE_PUBLISHABLE_KEY"),
-	}
-	return c.JSON(http.StatusOK, data)
 }
