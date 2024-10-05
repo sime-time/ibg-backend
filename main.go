@@ -10,7 +10,6 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/stripe/stripe-go/product"
 	"github.com/stripe/stripe-go/v79"
 	"github.com/stripe/stripe-go/v79/paymentintent"
 	"github.com/stripe/stripe-go/v79/price"
@@ -70,31 +69,6 @@ func publicKeyHandler(c echo.Context) (err error) {
 	return c.JSON(http.StatusOK, data)
 }
 
-// RetrievePriceByProductID fetches the first price object for a given product ID
-func RetrievePriceByProductID(productID string) (*stripe.Price, error) {
-
-	// Set the parameters to filter prices by product ID
-	params := &stripe.PriceListParams{
-		Product: stripe.String(productID), // Filter prices by product ID
-		Limit:   stripe.Int64(1),          // Limit the result to 1 price for efficiency
-	}
-
-	// List prices for the product ID
-	i := price.List(params)
-
-	// Retrieve the first price found for the product
-	if i.Next() {
-		return i.Price(), nil // Return the first price object
-	}
-
-	// Handle errors or the case when no price is found
-	if err := i.Err(); err != nil {
-		return nil, fmt.Errorf("error retrieving price: %v", err)
-	}
-
-	return nil, fmt.Errorf("no price found for product ID: %s", productID)
-}
-
 func handleCreatePaymentIntent(c echo.Context) (err error) {
 	// struct to recieve martial art selection from client request
 	var reqBody struct {
@@ -102,39 +76,36 @@ func handleCreatePaymentIntent(c echo.Context) (err error) {
 	}
 	if err := c.Bind(&reqBody); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Invalid request body",
+			"error": "invalid request body",
 		})
 	}
 
-	stripeMap := map[string]string{
-		"boxing":    "prod_QuqFFinwkIALdT",
-		"jiu-jitsu": "prod_QuqGPXOJMMKQvF",
-		"mma":       "prod_QvCQ4H6b78W79w",
+	// key:value pair of price ids
+	priceMap := map[string]string{
+		"boxing":    "price_1Q30Yu06MCKUDe5TaDFKUmwn",
+		"jiu-jitsu": "price_1Q30ZV06MCKUDe5T8hxKMWhK",
+		"mma":       "price_1Q3M2m06MCKUDe5TCJbaFfzR",
 	}
-	product, err := product.Get(stripeMap[reqBody.MartialArt], nil)
+
+	// find price id using requested martial art
+	stripePrice, err := price.Get(priceMap[reqBody.MartialArt], nil)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Invalid martial art name",
+			"error": "failed to retrieve price",
 		})
-	}
-	price, err := RetrievePriceByProductID(product.ID)
-	if err != nil {
-		log.Fatalf("Failed to retrieve price: %v", err)
 	}
 
 	// create payment intent parameters
 	piParams := &stripe.PaymentIntentParams{
-		Amount:   stripe.Int64(price.UnitAmount),
-		Currency: stripe.String(string(price.Currency)),
+		Amount:   stripe.Int64(stripePrice.UnitAmount),
+		Currency: stripe.String(string(stripePrice.Currency)),
 		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
 			Enabled: stripe.Bool(true),
 		},
 	}
+	piParams.AddMetadata("price_id", stripePrice.ID)
 
-	// add the productID to the payment intent metadata
-	piParams.AddMetadata("product_id", product.ID)
-	piParams.AddMetadata("price_id", price.ID)
-
+	// create payment intent
 	pi, err := paymentintent.New(piParams)
 	if err != nil {
 		if stripeErr, ok := err.(*stripe.Error); ok {
