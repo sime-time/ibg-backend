@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/stripe/stripe-go/v79"
+	"github.com/stripe/stripe-go/v79/checkout/session"
 	"github.com/stripe/stripe-go/v79/customer"
 )
 
@@ -23,13 +24,14 @@ func main() {
 	}
 	stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 
-	// route: get publishable-key
+	// routes
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.GET("/publishable-key", handlePublishableKey)
+		e.Router.POST("/checkout-session", handleCheckoutSession)
 		return nil
 	})
 
-	// when new member is created, create a new stripe customer
+	// after creating a new member -> create a new stripe customer
 	app.OnRecordAfterCreateRequest("member").Add(func(e *core.RecordCreateEvent) error {
 		email := e.Record.Get("email").(string)
 		name := e.Record.Get("name").(string)
@@ -61,13 +63,46 @@ func main() {
 	}
 }
 
-type PublishKeyParams struct {
+type PublishableKeyParams struct {
 	StripeKey string `json:"key"`
 }
 
 func handlePublishableKey(c echo.Context) (err error) {
-	publish_key := PublishKeyParams{
+	pubKey := PublishableKeyParams{
 		StripeKey: os.Getenv("STRIPE_PUBLISHABLE_KEY"),
 	}
-	return c.JSON(http.StatusOK, publish_key)
+	return c.JSON(http.StatusOK, pubKey)
+}
+
+func handleCheckoutSession(c echo.Context) error {
+	// parse the request json
+	var requestBody struct {
+		CustomerId string `json:"customerId"`
+		PriceId    string `json:"priceId"`
+	}
+	if err := c.Bind(&requestBody); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// create customer-specific checkout
+	checkoutSession, err := session.New(&stripe.CheckoutSessionParams{
+		Customer:   stripe.String(requestBody.CustomerId),
+		Mode:       stripe.String(string(stripe.CheckoutSessionModeSubscription)),
+		SuccessURL: stripe.String(os.Getenv("STRIPE_SUCCESS_URL")),
+		CancelURL:  stripe.String(os.Getenv("STRIPE_CANCEL_URL")),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{
+				Price:    stripe.String(requestBody.PriceId),
+				Quantity: stripe.Int64(1),
+			},
+		},
+	})
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error creating checkout session": err.Error()})
+	}
+
+	// return the url to the stripe checkout session
+	return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
 }
