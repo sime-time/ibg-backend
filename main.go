@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,13 +10,8 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/stripe/stripe-go/v79"
-	"github.com/stripe/stripe-go/v79/paymentintent"
-	"github.com/stripe/stripe-go/v79/price"
+	"github.com/stripe/stripe-go/v79/customer"
 )
-
-type CheckoutData struct {
-	ClientSecret string `json:"client_secret"`
-}
 
 func main() {
 	app := pocketbase.New()
@@ -29,25 +23,34 @@ func main() {
 	}
 	stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 
-	// route: hello example
+	// route: get publishable-key
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		e.Router.GET("/hello/:name", func(c echo.Context) error {
-			name := c.PathParam("name")
-			return c.JSON(http.StatusOK, map[string]string{"message": "Hello " + name})
-		} /* optional middlewares */)
-
+		e.Router.GET("/publishable-key", handlePublishableKey)
 		return nil
 	})
 
-	// route: public key
-	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		e.Router.GET("/public-key", publicKeyHandler)
-		return nil
-	})
+	// when new member is created, create a new stripe customer
+	app.OnRecordAfterCreateRequest("member").Add(func(e *core.RecordCreateEvent) error {
+		email := e.Record.Get("email").(string)
+		name := e.Record.Get("name").(string)
 
-	// route: create payment intent
-	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		e.Router.POST("/create-payment-intent", handleCreatePaymentIntent)
+		// create a new stripe customer
+		newCustomer, err := customer.New(&stripe.CustomerParams{
+			Email: stripe.String(email),
+			Name:  stripe.String(name),
+		})
+		if err != nil {
+			return err
+		}
+
+		// store the stripe customer id in pocketbase record
+		e.Record.Set("stripe_customer_id", newCustomer.ID)
+
+		// save the updated record
+		if err := app.Dao().SaveRecord(e.Record); err != nil {
+			return err
+		}
+
 		return nil
 	})
 
@@ -58,72 +61,13 @@ func main() {
 	}
 }
 
-type PublicKeyParams struct {
+type PublishKeyParams struct {
 	StripeKey string `json:"key"`
 }
 
-func publicKeyHandler(c echo.Context) (err error) {
-	data := PublicKeyParams{
+func handlePublishableKey(c echo.Context) (err error) {
+	publish_key := PublishKeyParams{
 		StripeKey: os.Getenv("STRIPE_PUBLISHABLE_KEY"),
 	}
-	return c.JSON(http.StatusOK, data)
-}
-
-func handleCreatePaymentIntent(c echo.Context) (err error) {
-	// struct to recieve martial art selection from client request
-	var reqBody struct {
-		MartialArt string `json:"martial_art"`
-	}
-	if err := c.Bind(&reqBody); err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "invalid request body",
-		})
-	}
-
-	// key:value pair of price ids
-	priceMap := map[string]string{
-		"boxing":    "price_1Q30Yu06MCKUDe5TaDFKUmwn",
-		"jiu-jitsu": "price_1Q30ZV06MCKUDe5T8hxKMWhK",
-		"mma":       "price_1Q3M2m06MCKUDe5TCJbaFfzR",
-	}
-
-	// find price id using requested martial art
-	stripePrice, err := price.Get(priceMap[reqBody.MartialArt], nil)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "failed to retrieve price",
-		})
-	}
-
-	// create payment intent parameters
-	piParams := &stripe.PaymentIntentParams{
-		Amount:   stripe.Int64(stripePrice.UnitAmount),
-		Currency: stripe.String(string(stripePrice.Currency)),
-		AutomaticPaymentMethods: &stripe.PaymentIntentAutomaticPaymentMethodsParams{
-			Enabled: stripe.Bool(true),
-		},
-	}
-	piParams.AddMetadata("price_id", stripePrice.ID)
-
-	// create payment intent
-	pi, err := paymentintent.New(piParams)
-	if err != nil {
-		if stripeErr, ok := err.(*stripe.Error); ok {
-			fmt.Printf("Stripe error: %v\n", stripeErr.Msg)
-			return c.JSON(http.StatusInternalServerError, echo.Map{
-				"error": stripeErr.Msg,
-			})
-		} else {
-			fmt.Printf("Other error occurred: %v\n", err.Error())
-			return c.JSON(http.StatusInternalServerError, echo.Map{
-				"error": err.Error(),
-			})
-		}
-	}
-
-	return c.JSON(http.StatusOK, struct {
-		ClientSecret string `json:"clientSecret"`
-	}{
-		ClientSecret: pi.ClientSecret,
-	})
+	return c.JSON(http.StatusOK, publish_key)
 }
