@@ -20,7 +20,7 @@ func main() {
 	// stripe integration
 	err := godotenv.Load(".env")
 	if err != nil {
-		log.Fatal("Failed to load .env file")
+		log.Print("Failed to load .env file")
 	}
 	stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 
@@ -106,3 +106,24 @@ func handleCheckoutSession(c echo.Context) error {
 	// return the url to the stripe checkout session
 	return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
 }
+
+type DocuSealPayload struct {
+	EventType string `json:"event_type"`
+	Data      struct {
+		Email         string `json:"email"`
+		Status        string `json:"status"`
+		SubmissionUrl string `json:"url"`
+	} `json:"data"`
+}
+
+/*
+func handleDocuSeal(c echo.Context) (err error) {
+	// parse the submission payload
+
+	// event type should be "form.completed"
+	// grab the email
+	// find the member with the same email
+	// take the submission/audit url
+	// insert the url into the member record
+}
+*/
