@@ -14,4 +14,4 @@ RUN go mod download
 EXPOSE 8090
 
 # Run the Go application when the container launches
-CMD ["go", "run", "main.go", "serve"]
+CMD ["go", "run", "main.go", "serve", "--http=0.0.0.0:8090"]
