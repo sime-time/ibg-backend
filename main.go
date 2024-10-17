@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -28,6 +31,71 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.GET("/publishable-key", handlePublishableKey)
 		e.Router.POST("/checkout-session", handleCheckoutSession)
+		return nil
+	})
+
+	// webhooks
+	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
+		e.Router.POST("/webhook", func(c echo.Context) error {
+			const MaxBodyBytes = int64(65536)
+			body := io.LimitReader(c.Request().Body, MaxBodyBytes)
+
+			payload, err := io.ReadAll(body)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading request body: %v\n", err)
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "Error reading request body")
+			}
+
+			event := stripe.Event{}
+			if err := json.Unmarshal(payload, &event); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to parse webhook body json %v\n", err.Error())
+				return echo.NewHTTPError(http.StatusBadRequest, "Failed to parse webhook body")
+			}
+
+			switch event.Type {
+			case "invoice.paid":
+				var invoice stripe.Invoice
+				err := json.Unmarshal(event.Data.Raw, &invoice)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing invoice JSON: %v\n", err)
+					return echo.NewHTTPError(http.StatusBadRequest, "Error parsing invoice JSON")
+				}
+				if err := handleInvoicePaid(invoice, app); err != nil {
+					fmt.Fprintf(os.Stderr, "Error handling invoice paid: %v\n", err)
+					return echo.NewHTTPError(http.StatusInternalServerError, "Error processing invoice")
+				}
+
+			case "invoice.payment_failed":
+				var invoice stripe.Invoice
+				err := json.Unmarshal(event.Data.Raw, &invoice)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing invoice JSON: %v\n", err)
+					return echo.NewHTTPError(http.StatusBadRequest, "Error parsing invoice JSON")
+				}
+				if err := handleInvoicePaymentFailed(invoice, app); err != nil {
+					fmt.Fprintf(os.Stderr, "Error handling invoice failed: %v\n", err)
+					return echo.NewHTTPError(http.StatusInternalServerError, "Error processing invoice payment fail")
+				}
+
+			case "customer.subscription.deleted":
+				var subscription stripe.Subscription
+				err := json.Unmarshal(event.Data.Raw, &subscription)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error parsing subscription JSON: %v\n", err)
+					return echo.NewHTTPError(http.StatusBadRequest, "Error parsing subscription JSON")
+				}
+				if err := handleSubscriptionDeleted(subscription, app); err != nil {
+					fmt.Fprintf(os.Stderr, "Error handling subscription deletion: %v\n", err)
+					return echo.NewHTTPError(http.StatusInternalServerError, "Error processing subscription deletion")
+				}
+
+			default:
+				fmt.Fprintf(os.Stderr, "Unhandled event type %s\n", event.Type)
+			}
+
+			return c.NoContent(http.StatusOK)
+		})
+
 		return nil
 	})
 
@@ -80,6 +148,7 @@ func handleCheckoutSession(c echo.Context) error {
 		CustomerId string `json:"customerId"`
 		PriceId    string `json:"priceId"`
 	}
+
 	if err := c.Bind(&requestBody); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Invalid request body",
@@ -107,23 +176,51 @@ func handleCheckoutSession(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
 }
 
-type DocuSealPayload struct {
-	EventType string `json:"event_type"`
-	Data      struct {
-		Email         string `json:"email"`
-		Status        string `json:"status"`
-		SubmissionUrl string `json:"url"`
-	} `json:"data"`
+func handleInvoicePaid(invoice stripe.Invoice, app *pocketbase.PocketBase) error {
+	// check if invoice is associated with a subscription
+	if invoice.Subscription == nil {
+		return nil
+	}
+
+	customerID := invoice.Customer.ID
+
+	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerID)
+	if err != nil {
+		return fmt.Errorf("error finding member record %w", err)
+	}
+
+	record.Set("is_subscribed", true)
+
+	return nil
 }
 
-/*
-func handleDocuSeal(c echo.Context) (err error) {
-	// parse the submission payload
+func handleInvoicePaymentFailed(invoice stripe.Invoice, app *pocketbase.PocketBase) error {
+	// check if invoice is associated with a subscription
+	if invoice.Subscription == nil {
+		return nil
+	}
 
-	// event type should be "form.completed"
-	// grab the email
-	// find the member with the same email
-	// take the submission/audit url
-	// insert the url into the member record
+	customerID := invoice.Customer.ID
+
+	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerID)
+	if err != nil {
+		return fmt.Errorf("error finding member record %w", err)
+	}
+
+	record.Set("is_subscribed", false)
+
+	return nil
 }
-*/
+
+func handleSubscriptionDeleted(sub stripe.Subscription, app *pocketbase.PocketBase) error {
+	customerID := sub.Customer.ID
+
+	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerID)
+	if err != nil {
+		return fmt.Errorf("error finding member record %w", err)
+	}
+
+	record.Set("is_subscribed", false)
+
+	return nil
+}
