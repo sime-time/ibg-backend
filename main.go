@@ -34,7 +34,7 @@ func main() {
 		return nil
 	})
 
-	// webhooks
+	// webhook
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.POST("/webhook", func(c echo.Context) error {
 			const MaxBodyBytes = int64(65536)
@@ -51,6 +51,17 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Failed to parse webhook body json %v\n", err.Error())
 				return echo.NewHTTPError(http.StatusBadRequest, "Failed to parse webhook body")
 			}
+
+			fmt.Println(payload)
+
+			// stripe signature verification
+			/*
+				whsec := os.Getenv("STRIPE_WHSEC")
+				event, err := webhook.ConstructEvent(payload, signatureHeader, whsec)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Signature verification failed %v\n", err.Error())
+					return echo.NewHTTPError(http.StatusBadRequest, "Signature verification failed")
+				}*/
 
 			switch event.Type {
 			case "invoice.paid":
