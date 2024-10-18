@@ -15,6 +15,7 @@ import (
 	"github.com/stripe/stripe-go/v79"
 	"github.com/stripe/stripe-go/v79/checkout/session"
 	"github.com/stripe/stripe-go/v79/customer"
+	"github.com/stripe/stripe-go/v79/webhook"
 )
 
 func main() {
@@ -43,12 +44,20 @@ func main() {
 			if err != nil {
 				return err
 			}
-
 			// unmarshall the payload into this event object
 			var event stripe.Event
-			err = json.Unmarshal(payload, &event)
-			if err != nil {
-				return err
+
+			webhookSecret := os.Getenv("STRIPE_WHSEC")
+			if webhookSecret != "" {
+				event, err = webhook.ConstructEvent(payload, request.Header.Get("Stripe-Signature"), webhookSecret)
+				if err != nil {
+					return err
+				}
+			} else {
+				err = json.Unmarshal(payload, &event)
+				if err != nil {
+					return err
+				}
 			}
 
 			switch event.Type {
