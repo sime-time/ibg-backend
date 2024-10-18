@@ -59,10 +59,20 @@ func main() {
 					return err
 				}
 
-				err := handleInvoicePaid(&invoice, app)
-				if err != nil {
-					return err
+				// check if invoice is associated with a subscription
+				if invoice.Subscription == nil {
+					return nil
 				}
+
+				customerId := invoice.Customer.ID
+
+				record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
+				if err != nil {
+					return fmt.Errorf("error finding member record %w", err)
+				}
+
+				record.Set("is_subscribed", true)
+				fmt.Println("Set is_subscribed to true")
 
 			case "invoice.payment_failed":
 				var invoice stripe.Invoice
@@ -89,7 +99,7 @@ func main() {
 				}
 
 			default:
-				fmt.Println("Unhandled event type: %w", event.Type)
+				fmt.Printf("Unhandled event type: %v", event.Type)
 				return c.String(http.StatusOK, "Unhandled event type")
 			}
 
@@ -182,9 +192,9 @@ func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) erro
 		return nil
 	}
 
-	customerID := invoice.Customer.ID
+	customerId := invoice.Customer.ID
 
-	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerID)
+	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
 	if err != nil {
 		return fmt.Errorf("error finding member record %w", err)
 	}
@@ -200,9 +210,9 @@ func handleInvoicePaymentFailed(invoice *stripe.Invoice, app *pocketbase.PocketB
 		return nil
 	}
 
-	customerID := invoice.Customer.ID
+	customerId := invoice.Customer.ID
 
-	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerID)
+	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
 	if err != nil {
 		return fmt.Errorf("error finding member record %w", err)
 	}
@@ -213,9 +223,9 @@ func handleInvoicePaymentFailed(invoice *stripe.Invoice, app *pocketbase.PocketB
 }
 
 func handleSubscriptionDeleted(sub *stripe.Subscription, app *pocketbase.PocketBase) error {
-	customerID := sub.Customer.ID
+	customerId := sub.Customer.ID
 
-	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerID)
+	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
 	if err != nil {
 		return fmt.Errorf("error finding member record %w", err)
 	}
