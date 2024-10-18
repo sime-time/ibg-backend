@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -35,27 +37,61 @@ func main() {
 	// webhook
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.POST("/webhook", func(c echo.Context) error {
-			event := new(stripe.Event)
-			err := c.Bind(&event)
+			// read the request from stripe
+			request := c.Request()
+			payload, err := io.ReadAll(request.Body)
 			if err != nil {
 				return err
 			}
-			log.Println("MY EVENT OBJ: ", event)
-			/*
-				switch event.Type {
-				case "invoice.paid":
-					var invoice stripe.Invoice
 
-				case "invoice.payment_failed":
-					var invoice stripe.Invoice
+			// unmarshall the payload into this event object
+			var event stripe.Event
+			err = json.Unmarshal(payload, &event)
+			if err != nil {
+				return err
+			}
 
-				case "customer.subscription.deleted":
-					var subscription stripe.Subscription
-
-				default:
-					return c.String(http.StatusOK, "Unhandled event type")
+			switch event.Type {
+			case "invoice.paid":
+				var invoice stripe.Invoice
+				err = json.Unmarshal(event.Data.Raw, &invoice)
+				if err != nil {
+					return err
 				}
-			*/
+
+				err := handleInvoicePaid(&invoice, app)
+				if err != nil {
+					return err
+				}
+
+			case "invoice.payment_failed":
+				var invoice stripe.Invoice
+				err = json.Unmarshal(event.Data.Raw, &invoice)
+				if err != nil {
+					return err
+				}
+
+				err := handleInvoicePaymentFailed(&invoice, app)
+				if err != nil {
+					return err
+				}
+
+			case "customer.subscription.deleted":
+				var subscription stripe.Subscription
+				err = json.Unmarshal(event.Data.Raw, &subscription)
+				if err != nil {
+					return err
+				}
+
+				err := handleSubscriptionDeleted(&subscription, app)
+				if err != nil {
+					return err
+				}
+
+			default:
+				fmt.Println("Unhandled event type: %w", event.Type)
+				return c.String(http.StatusOK, "Unhandled event type")
+			}
 
 			return c.NoContent(http.StatusOK)
 		})
@@ -140,7 +176,7 @@ func handleCheckoutSession(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
 }
 
-func handleInvoicePaid(invoice stripe.Invoice, app *pocketbase.PocketBase) error {
+func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) error {
 	// check if invoice is associated with a subscription
 	if invoice.Subscription == nil {
 		return nil
@@ -158,7 +194,7 @@ func handleInvoicePaid(invoice stripe.Invoice, app *pocketbase.PocketBase) error
 	return nil
 }
 
-func handleInvoicePaymentFailed(invoice stripe.Invoice, app *pocketbase.PocketBase) error {
+func handleInvoicePaymentFailed(invoice *stripe.Invoice, app *pocketbase.PocketBase) error {
 	// check if invoice is associated with a subscription
 	if invoice.Subscription == nil {
 		return nil
@@ -176,7 +212,7 @@ func handleInvoicePaymentFailed(invoice stripe.Invoice, app *pocketbase.PocketBa
 	return nil
 }
 
-func handleSubscriptionDeleted(sub stripe.Subscription, app *pocketbase.PocketBase) error {
+func handleSubscriptionDeleted(sub *stripe.Subscription, app *pocketbase.PocketBase) error {
 	customerID := sub.Customer.ID
 
 	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerID)
