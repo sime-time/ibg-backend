@@ -68,19 +68,10 @@ func main() {
 					return err
 				}
 
-				// check if invoice is associated with a subscription
-				if invoice.Subscription == nil {
-					return nil
-				}
-
-				customerId := invoice.Customer.ID
-
-				record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
+				err := handleInvoicePaid(&invoice, app)
 				if err != nil {
-					return fmt.Errorf("error finding member record %w", err)
+					return err
 				}
-
-				record.Set("is_subscribed", true)
 				fmt.Println("Set is_subscribed to true")
 
 			case "invoice.payment_failed":
@@ -208,7 +199,11 @@ func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) erro
 		return fmt.Errorf("error finding member record %w", err)
 	}
 
+	// update and save record
 	record.Set("is_subscribed", true)
+	if err := app.Dao().SaveRecord(record); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -226,7 +221,11 @@ func handleInvoicePaymentFailed(invoice *stripe.Invoice, app *pocketbase.PocketB
 		return fmt.Errorf("error finding member record %w", err)
 	}
 
+	// update and save record
 	record.Set("is_subscribed", false)
+	if err := app.Dao().SaveRecord(record); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -239,7 +238,11 @@ func handleSubscriptionDeleted(sub *stripe.Subscription, app *pocketbase.PocketB
 		return fmt.Errorf("error finding member record %w", err)
 	}
 
+	// update and save record
 	record.Set("is_subscribed", false)
+	if err := app.Dao().SaveRecord(record); err != nil {
+		return err
+	}
 
 	return nil
 }
