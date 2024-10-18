@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -37,72 +35,27 @@ func main() {
 	// webhook
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.POST("/webhook", func(c echo.Context) error {
-			const MaxBodyBytes = int64(65536)
-			body := io.LimitReader(c.Request().Body, MaxBodyBytes)
-
-			payload, err := io.ReadAll(body)
+			event := new(stripe.Event)
+			err := c.Bind(&event)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading request body: %v\n", err)
-				return echo.NewHTTPError(http.StatusServiceUnavailable, "Error reading request body")
+				return err
 			}
-
-			event := stripe.Event{}
-			if err := json.Unmarshal(payload, &event); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to parse webhook body json %v\n", err.Error())
-				return echo.NewHTTPError(http.StatusBadRequest, "Failed to parse webhook body")
-			}
-
-			fmt.Println(payload)
-
-			// stripe signature verification
+			log.Println("MY EVENT OBJ: ", event)
 			/*
-				whsec := os.Getenv("STRIPE_WHSEC")
-				event, err := webhook.ConstructEvent(payload, signatureHeader, whsec)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Signature verification failed %v\n", err.Error())
-					return echo.NewHTTPError(http.StatusBadRequest, "Signature verification failed")
-				}*/
+				switch event.Type {
+				case "invoice.paid":
+					var invoice stripe.Invoice
 
-			switch event.Type {
-			case "invoice.paid":
-				var invoice stripe.Invoice
-				err := json.Unmarshal(event.Data.Raw, &invoice)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing invoice JSON: %v\n", err)
-					return echo.NewHTTPError(http.StatusBadRequest, "Error parsing invoice JSON")
-				}
-				if err := handleInvoicePaid(invoice, app); err != nil {
-					fmt.Fprintf(os.Stderr, "Error handling invoice paid: %v\n", err)
-					return echo.NewHTTPError(http.StatusInternalServerError, "Error processing invoice")
-				}
+				case "invoice.payment_failed":
+					var invoice stripe.Invoice
 
-			case "invoice.payment_failed":
-				var invoice stripe.Invoice
-				err := json.Unmarshal(event.Data.Raw, &invoice)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing invoice JSON: %v\n", err)
-					return echo.NewHTTPError(http.StatusBadRequest, "Error parsing invoice JSON")
-				}
-				if err := handleInvoicePaymentFailed(invoice, app); err != nil {
-					fmt.Fprintf(os.Stderr, "Error handling invoice failed: %v\n", err)
-					return echo.NewHTTPError(http.StatusInternalServerError, "Error processing invoice payment fail")
-				}
+				case "customer.subscription.deleted":
+					var subscription stripe.Subscription
 
-			case "customer.subscription.deleted":
-				var subscription stripe.Subscription
-				err := json.Unmarshal(event.Data.Raw, &subscription)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing subscription JSON: %v\n", err)
-					return echo.NewHTTPError(http.StatusBadRequest, "Error parsing subscription JSON")
+				default:
+					return c.String(http.StatusOK, "Unhandled event type")
 				}
-				if err := handleSubscriptionDeleted(subscription, app); err != nil {
-					fmt.Fprintf(os.Stderr, "Error handling subscription deletion: %v\n", err)
-					return echo.NewHTTPError(http.StatusInternalServerError, "Error processing subscription deletion")
-				}
-
-			default:
-				fmt.Fprintf(os.Stderr, "Unhandled event type %s\n", event.Type)
-			}
+			*/
 
 			return c.NoContent(http.StatusOK)
 		})
