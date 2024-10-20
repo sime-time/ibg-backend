@@ -183,8 +183,8 @@ func handleCheckoutSession(c echo.Context) error {
 	}
 
 	// return the url to the stripe checkout session
-	//return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
-	return c.Redirect(http.StatusOK, checkoutSession.URL)
+	return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
+	//return c.Redirect(http.StatusOK, checkoutSession.URL);
 }
 
 func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) error {
