@@ -126,7 +126,7 @@ func main() {
 		// store the stripe customer id in pocketbase record
 		e.Record.Set("stripe_customer_id", newCustomer.ID)
 
-		// save the updated record
+		// update and then save the record
 		if err := app.Dao().SaveRecord(e.Record); err != nil {
 			return err
 		}
@@ -183,7 +183,8 @@ func handleCheckoutSession(c echo.Context) error {
 	}
 
 	// return the url to the stripe checkout session
-	return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
+	//return c.JSON(http.StatusOK, map[string]string{"url": checkoutSession.URL})
+	return c.Redirect(http.StatusOK, checkoutSession.URL)
 }
 
 func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) error {
