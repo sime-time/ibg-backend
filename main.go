@@ -256,10 +256,10 @@ func handleCustomerPortal(c echo.Context) error {
 	}
 
 	if err := c.Bind(&requestBody); err != nil {
-		return c.String(http.StatusBadRequest, "Invalid customer ID")
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Invalid customer ID",
+		})
 	}
-
-	stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 
 	customerPortalSession := &stripe.BillingPortalSessionParams{
 		Customer:  stripe.String(requestBody.CustomerId),
@@ -268,8 +268,8 @@ func handleCustomerPortal(c echo.Context) error {
 
 	result, err := billingSession.New(customerPortalSession)
 	if err != nil {
-		return c.String(http.StatusInternalServerError, err.Error())
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error creating customer portal": err.Error()})
 	}
 
-	return c.Redirect(http.StatusOK, result.URL)
+	return c.JSON(http.StatusOK, map[string]string{"url": result.URL})
 }
