@@ -32,6 +32,7 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.GET("/publishable-key", handlePublishableKey)
 		e.Router.POST("/checkout-session", handleCheckoutSession)
+		e.Router.POST("/customer-portal", handleCustomerPortal)
 		return nil
 	})
 
