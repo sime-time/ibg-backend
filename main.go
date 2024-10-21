@@ -271,7 +271,5 @@ func handleCustomerPortal(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error creating customer portal": err.Error()})
 	}
 
-	fmt.Println(result)
-
-	return c.JSON(http.StatusOK, echo.Map{"url": result.URL})
+	return c.JSON(http.StatusOK, result)
 }
