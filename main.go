@@ -318,6 +318,7 @@ func handleCancelSubscription(c echo.Context) error {
 				"error": "Failed to cancel subscription",
 			})
 		} else {
+			fmt.Println("Member Subscription Cancelled")
 			return c.JSON(http.StatusOK, echo.Map{
 				"message": "Subscription cancelled successfully",
 			})
