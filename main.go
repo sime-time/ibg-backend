@@ -197,6 +197,17 @@ func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) erro
 
 	customerId := invoice.Customer.ID
 
+	jsonBytes, _ := json.MarshalIndent(invoice, "", "  ")
+	fmt.Println("Invoice as JSON:", string(jsonBytes))
+
+	var productName string
+	if len(invoice.Lines.Data) > 0 {
+		// The product name is available in the line items
+		if invoice.Lines.Data[0].Price != nil && invoice.Lines.Data[0].Price.Product != nil {
+			productName = invoice.Lines.Data[0].Price.Product.Name
+		}
+	}
+
 	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
 	if err != nil {
 		return fmt.Errorf("error finding member record %w", err)
@@ -204,6 +215,7 @@ func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) erro
 
 	// update and save record
 	record.Set("is_subscribed", true)
+	record.Set("program", productName)
 	if err := app.Dao().SaveRecord(record); err != nil {
 		return err
 	}
