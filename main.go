@@ -17,6 +17,7 @@ import (
 	"github.com/stripe/stripe-go/v79/checkout/session"
 	"github.com/stripe/stripe-go/v79/customer"
 	"github.com/stripe/stripe-go/v79/product"
+	"github.com/stripe/stripe-go/v79/subscription"
 	"github.com/stripe/stripe-go/v79/webhook"
 )
 
@@ -35,10 +36,11 @@ func main() {
 		e.Router.GET("/publishable-key", handlePublishableKey)
 		e.Router.POST("/checkout-session", handleCheckoutSession)
 		e.Router.POST("/customer-portal", handleCustomerPortal)
+		e.Router.POST("/cancel-subscription", handleCancelSubscription)
 		return nil
 	})
 
-	// webhook
+	// webhooks
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		e.Router.POST("/webhook", func(c echo.Context) error {
 			// read the request from stripe
@@ -198,9 +200,6 @@ func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) erro
 
 	customerId := invoice.Customer.ID
 
-	jsonBytes, _ := json.MarshalIndent(invoice, "", "  ")
-	fmt.Println("Invoice as JSON:", string(jsonBytes))
-
 	var productName string
 	if len(invoice.Lines.Data) > 0 && invoice.Lines.Data[0].Price != nil {
 		productId := invoice.Lines.Data[0].Price.Product.ID
@@ -288,4 +287,43 @@ func handleCustomerPortal(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, result)
+}
+
+func handleCancelSubscription(c echo.Context) error {
+	var requestBody struct {
+		CustomerId string `json:"customerId"`
+	}
+
+	if err := c.Bind(&requestBody); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Invalid customer ID",
+		})
+	}
+
+	// get list of all subscriptions with the same customer id
+	params := &stripe.SubscriptionListParams{
+		Customer: &requestBody.CustomerId,
+	}
+	subList := subscription.List(params)
+
+	fmt.Println(subList)
+
+	// cancel the first subscription found for this customer
+	for subList.Next() {
+		sub := subList.Subscription()
+
+		_, err := subscription.Cancel(sub.ID, nil)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, echo.Map{
+				"error": "Failed to cancel subscription",
+			})
+		} else {
+			return c.JSON(http.StatusOK, echo.Map{
+				"message": "Subscription cancelled successfully",
+			})
+		}
+	}
+	return c.JSON(http.StatusNotFound, echo.Map{
+		"error": "No subscription found for the customer",
+	})
 }
