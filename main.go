@@ -16,6 +16,7 @@ import (
 	billingSession "github.com/stripe/stripe-go/v79/billingportal/session"
 	"github.com/stripe/stripe-go/v79/checkout/session"
 	"github.com/stripe/stripe-go/v79/customer"
+	"github.com/stripe/stripe-go/v79/product"
 	"github.com/stripe/stripe-go/v79/webhook"
 )
 
@@ -201,11 +202,14 @@ func handleInvoicePaid(invoice *stripe.Invoice, app *pocketbase.PocketBase) erro
 	fmt.Println("Invoice as JSON:", string(jsonBytes))
 
 	var productName string
-	if len(invoice.Lines.Data) > 0 {
-		// The product name is available in the line items
-		if invoice.Lines.Data[0].Price != nil && invoice.Lines.Data[0].Price.Product != nil {
-			productName = invoice.Lines.Data[0].Price.Product.Name
+	if len(invoice.Lines.Data) > 0 && invoice.Lines.Data[0].Price != nil {
+		productId := invoice.Lines.Data[0].Price.Product.ID
+		params := &stripe.ProductParams{}
+		result, err := product.Get(productId, params)
+		if err != nil {
+			return fmt.Errorf("error finding stripe product %w", err)
 		}
+		productName = result.Name
 	}
 
 	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
