@@ -19,7 +19,6 @@ import (
 	"github.com/stripe/stripe-go/v79/product"
 	"github.com/stripe/stripe-go/v79/subscription"
 	"github.com/stripe/stripe-go/v79/webhook"
-  "github.com/stripe/stripe-go/v79/accountsession"
 )
 
 func main() {
@@ -38,7 +37,6 @@ func main() {
 		e.Router.POST("/checkout-session", handleCheckoutSession)
 		e.Router.POST("/customer-portal", handleCustomerPortal)
 		e.Router.POST("/cancel-subscription", handleCancelSubscription)
-    e.Router.POST("/create-account-session", handleCreateAccountSession)
 		return nil
 	})
 
@@ -329,34 +327,4 @@ func handleCancelSubscription(c echo.Context) error {
 	return c.JSON(http.StatusNotFound, echo.Map{
 		"error": "No subscription found for the customer",
 	})
-}
-
-func handleCreateAccountSession(c echo.Context) error {
-  accountSession, err := accountsession.New(
-    &stripe.AccountSessionParams{
-      Account: stripe.String(os.Getenv("STRIPE_ACCOUNT_ID")),
-      Components: &stripe.AccountSessionComponentsParams{
-        Payments: &stripe.AccountSessionComponentsPaymentsParams{
-          Enabled: stripe.Bool(true),
-          Features: &stripe.AccountSessionComponentsPaymentsFeaturesParams{
-            RefundManagement: stripe.Bool(true),
-            DisputeManagement: stripe.Bool(true),
-            CapturePayments: stripe.Bool(true),
-          },
-        },
-      },
-    },
-  )
-
-  if err != nil {
-    log.Printf("an error occurred when calling Stripe API to create account session.")
-    return c.JSON(http.StatusInternalServerError, echo.Map{
-      "error": "Error occured when calling Stripe API to create account session.",
-    })
-  }
-
-  // return client secret from account session
-  return c.JSON(http.StatusOK, echo.Map{
-    "client_secret": accountSession.ClientSecret,
-  })
 }
