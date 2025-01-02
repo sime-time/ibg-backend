@@ -169,7 +169,6 @@ func handleCheckoutSession(c echo.Context) error {
 		CustomerId string `json:"customerId"`
 		PriceId    string `json:"priceId"`
 	}
-
 	if err := c.Bind(&requestBody); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Invalid request body",
@@ -237,37 +236,30 @@ func handleInvoicePaymentFailed(invoice *stripe.Invoice, app *pocketbase.PocketB
 	if invoice.Subscription == nil {
 		return nil
 	}
-
 	customerId := invoice.Customer.ID
-
 	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
 	if err != nil {
 		return fmt.Errorf("error finding member record %w", err)
 	}
-
 	// update and save record
 	record.Set("is_subscribed", false)
 	if err := app.Dao().SaveRecord(record); err != nil {
 		return err
 	}
-
 	return nil
 }
 
 func handleSubscriptionDeleted(sub *stripe.Subscription, app *pocketbase.PocketBase) error {
 	customerId := sub.Customer.ID
-
 	record, err := app.Dao().FindFirstRecordByData("member", "stripe_customer_id", customerId)
 	if err != nil {
 		return fmt.Errorf("error finding member record %w", err)
 	}
-
 	// update and save record
 	record.Set("is_subscribed", false)
 	if err := app.Dao().SaveRecord(record); err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -275,23 +267,19 @@ func handleCustomerPortal(c echo.Context) error {
 	var requestBody struct {
 		CustomerId string `json:"customerId"`
 	}
-
 	if err := c.Bind(&requestBody); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Invalid customer ID",
 		})
 	}
-
 	customerPortalSession := &stripe.BillingPortalSessionParams{
 		Customer:  stripe.String(requestBody.CustomerId),
 		ReturnURL: stripe.String(os.Getenv("STRIPE_CUSTOMER_PORTAL_RETURN_URL")),
 	}
-
 	result, err := billingSession.New(customerPortalSession)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error creating customer portal": err.Error()})
 	}
-
 	return c.JSON(http.StatusOK, result)
 }
 
@@ -299,25 +287,19 @@ func handleCancelSubscription(c echo.Context) error {
 	var requestBody struct {
 		CustomerId string `json:"customerId"`
 	}
-
 	if err := c.Bind(&requestBody); err != nil {
 		return c.JSON(http.StatusBadRequest, echo.Map{
 			"error": "Invalid customer ID",
 		})
 	}
-
 	// get list of all subscriptions with the same customer id
 	params := &stripe.SubscriptionListParams{
 		Customer: &requestBody.CustomerId,
 	}
 	subList := subscription.List(params)
-
-	fmt.Println(subList)
-
 	// cancel the first subscription found for this customer
 	for subList.Next() {
 		sub := subList.Subscription()
-
 		_, err := subscription.Cancel(sub.ID, nil)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, echo.Map{
@@ -333,6 +315,35 @@ func handleCancelSubscription(c echo.Context) error {
 	return c.JSON(http.StatusNotFound, echo.Map{
 		"error": "No subscription found for the customer",
 	})
+}
+
+func handleClientSecret(c echo.Context) error {
+	// parse the request json
+	var requestBody struct {
+		CustomerId string `json:"customerId"`
+	}
+	if err := c.Bind(&requestBody); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Invalid request body",
+		})
+	}
+	// create customer-specific checkout
+	params := &stripe.CustomerSessionParams{
+		Customer: stripe.String(requestBody.CustomerId),
+		Components: &stripe.CustomerSessionComponentsParams{
+			PricingTable: &stripe.CustomerSessionComponentsPricingTableParams{
+				Enabled: stripe.Bool(true),
+			},
+		},
+	}
+	result, err := customersession.New(params)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Internal server error",
+		})
+	}
+	// return the client secret to personalize the checkout to the customer
+	return c.JSON(http.StatusOK, map[string]string{"client_secret": result.ClientSecret})
 }
 
 type Timeframe struct {
@@ -360,6 +371,7 @@ func getTimeframe(monthsAgo int) Timeframe {
 }
 
 func handlePaymentList(c echo.Context) error {
+	// get the timeframe
 	timeframe := getTimeframe(6)
 
 	params := &stripe.PaymentIntentListParams{}
@@ -399,38 +411,4 @@ func handlePaymentList(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, paymentData)
-}
-
-func handleClientSecret(c echo.Context) error {
-	// parse the request json
-	var requestBody struct {
-		CustomerId string `json:"customerId"`
-	}
-
-	if err := c.Bind(&requestBody); err != nil {
-		return c.JSON(http.StatusBadRequest, echo.Map{
-			"error": "Invalid request body",
-		})
-	}
-
-	// create customer-specific checkout
-	params := &stripe.CustomerSessionParams{
-		Customer: stripe.String(requestBody.CustomerId),
-		Components: &stripe.CustomerSessionComponentsParams{
-			PricingTable: &stripe.CustomerSessionComponentsPricingTableParams{
-				Enabled: stripe.Bool(true),
-			},
-		},
-	}
-
-	result, err := customersession.New(params)
-
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, echo.Map{
-			"error": "Internal server error",
-		})
-	}
-
-	// return the client secret to personalize the checkout to the customer
-	return c.JSON(http.StatusOK, map[string]string{"client_secret": result.ClientSecret})
 }
