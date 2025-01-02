@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v5"
@@ -16,6 +18,8 @@ import (
 	billingSession "github.com/stripe/stripe-go/v79/billingportal/session"
 	"github.com/stripe/stripe-go/v79/checkout/session"
 	"github.com/stripe/stripe-go/v79/customer"
+	"github.com/stripe/stripe-go/v79/customersession"
+	"github.com/stripe/stripe-go/v79/paymentintent"
 	"github.com/stripe/stripe-go/v79/product"
 	"github.com/stripe/stripe-go/v79/subscription"
 	"github.com/stripe/stripe-go/v79/webhook"
@@ -37,6 +41,8 @@ func main() {
 		e.Router.POST("/checkout-session", handleCheckoutSession)
 		e.Router.POST("/customer-portal", handleCustomerPortal)
 		e.Router.POST("/cancel-subscription", handleCancelSubscription)
+		e.Router.GET("/payment-list", handlePaymentList)
+		e.Router.POST("/client-secret", handleClientSecret)
 		return nil
 	})
 
@@ -327,4 +333,104 @@ func handleCancelSubscription(c echo.Context) error {
 	return c.JSON(http.StatusNotFound, echo.Map{
 		"error": "No subscription found for the customer",
 	})
+}
+
+type Timeframe struct {
+	start int64
+	end   int64
+}
+
+// to set when to start and stop the collection of revenue data
+func getTimeframe(monthsAgo int) Timeframe {
+	// current time
+	endTime := time.Now()
+
+	// how many months ago
+	startTime := endTime.AddDate(0, -monthsAgo, 0)
+
+	// convert to integers
+	startTimestamp := startTime.Unix()
+	endTimestamp := endTime.Unix()
+
+	timeframe := Timeframe{
+		start: startTimestamp,
+		end:   endTimestamp,
+	}
+	return timeframe
+}
+
+func handlePaymentList(c echo.Context) error {
+	timeframe := getTimeframe(6)
+
+	params := &stripe.PaymentIntentListParams{}
+	params.Filters.AddFilter("created", "gte", strconv.FormatInt(timeframe.start, 10))
+	params.Filters.AddFilter("created", "lte", strconv.FormatInt(timeframe.end, 10))
+
+	paymentList := paymentintent.List(params)
+
+	// return a map of payments
+	paymentData := make(map[string]map[string]interface{})
+
+	for paymentList.Next() {
+		paymentIntent := paymentList.PaymentIntent()
+
+		// get the month and year of payment
+		t := time.Unix(paymentIntent.Created, 0)
+		month := t.Format("1")
+		year := t.Format("2006")
+
+		// debug log
+		fmt.Printf("Payment Intent: ID=%s, Amount=%d, Month=%s, Status=%s\n",
+			paymentIntent.ID, paymentIntent.Amount, month, paymentIntent.Status)
+
+		paymentData[paymentIntent.ID] = map[string]interface{}{
+			"amount": paymentIntent.Amount,
+			"month":  month,
+			"year":   year,
+			"status": paymentIntent.Status,
+		}
+	}
+
+	if err := paymentList.Err(); err != nil {
+		log.Printf("Error iterating payment intents: %v\n", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Failed to fetch payment intents",
+		})
+	}
+
+	return c.JSON(http.StatusOK, paymentData)
+}
+
+func handleClientSecret(c echo.Context) error {
+	// parse the request json
+	var requestBody struct {
+		CustomerId string `json:"customerId"`
+	}
+
+	if err := c.Bind(&requestBody); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// create customer-specific checkout
+	params := &stripe.CustomerSessionParams{
+		Customer: stripe.String(requestBody.CustomerId),
+		Components: &stripe.CustomerSessionComponentsParams{
+			PricingTable: &stripe.CustomerSessionComponentsPricingTableParams{
+				Enabled: stripe.Bool(true),
+			},
+		},
+	}
+
+	result, err := customersession.New(params)
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{
+			"error": "Internal server error",
+		})
+	}
+
+	// return the client secret to personalize the checkout to the customer
+	return c.JSON(http.StatusOK, map[string]string{"client_secret": result.ClientSecret})
 }
