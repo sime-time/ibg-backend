@@ -41,8 +41,8 @@ func main() {
 		e.Router.POST("/checkout-session", handleCheckoutSession)
 		e.Router.POST("/customer-portal", handleCustomerPortal)
 		e.Router.POST("/cancel-subscription", handleCancelSubscription)
-		e.Router.GET("/payment-list", handlePaymentList)
 		e.Router.POST("/client-secret", handleClientSecret)
+		e.Router.POST("/revenue-data", handleRevenueData)
 		return nil
 	})
 
@@ -57,7 +57,6 @@ func main() {
 			}
 			// unmarshall the payload into this event object
 			var event stripe.Event
-
 			webhookSecret := os.Getenv("STRIPE_WHSEC")
 			if webhookSecret != "" {
 				event, err = webhook.ConstructEvent(payload, request.Header.Get("Stripe-Signature"), webhookSecret)
@@ -355,9 +354,13 @@ type Timeframe struct {
 func getTimeframe(monthsAgo int) Timeframe {
 	// current time
 	endTime := time.Now()
+	fmt.Println("End time: ")
+	fmt.Println(endTime.Format("2006-01-02"))
 
-	// how many months ago
-	startTime := endTime.AddDate(0, -monthsAgo, 0)
+	// make startTime the first day of the month
+	startTime := endTime.AddDate(0, -monthsAgo, 1-endTime.Day())
+	fmt.Println("Start time: ")
+	fmt.Println(startTime.Format("2006-01-02"))
 
 	// convert to integers
 	startTimestamp := startTime.Unix()
@@ -370,36 +373,40 @@ func getTimeframe(monthsAgo int) Timeframe {
 	return timeframe
 }
 
-func handlePaymentList(c echo.Context) error {
-	// get the timeframe
-	timeframe := getTimeframe(6)
+func handleRevenueData(c echo.Context) error {
+	var requestBody struct {
+		MonthsAgo int `json:"monthsAgo"`
+	}
+	if err := c.Bind(&requestBody); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{
+			"error": "Invalid request body",
+		})
+	}
+	timeframe := getTimeframe(requestBody.MonthsAgo)
 
+	// filter the list of payments to match the timeframe
 	params := &stripe.PaymentIntentListParams{}
 	params.Filters.AddFilter("created", "gte", strconv.FormatInt(timeframe.start, 10))
 	params.Filters.AddFilter("created", "lte", strconv.FormatInt(timeframe.end, 10))
-
 	paymentList := paymentintent.List(params)
 
-	// return a map of payments
-	paymentData := make(map[string]map[string]interface{})
+	// map of payment amounts for each month
+	revenueData := make(map[string]map[string]int64)
 
 	for paymentList.Next() {
-		paymentIntent := paymentList.PaymentIntent()
+		payment := paymentList.PaymentIntent()
 
 		// get the month and year of payment
-		t := time.Unix(paymentIntent.Created, 0)
-		month := t.Format("1")
+		t := time.Unix(payment.Created, 0)
+		month := t.Format("January")
 		year := t.Format("2006")
 
-		// debug log
-		fmt.Printf("Payment Intent: ID=%s, Amount=%d, Month=%s, Status=%s\n",
-			paymentIntent.ID, paymentIntent.Amount, month, paymentIntent.Status)
-
-		paymentData[paymentIntent.ID] = map[string]interface{}{
-			"amount": paymentIntent.Amount,
-			"month":  month,
-			"year":   year,
-			"status": paymentIntent.Status,
+		if payment.Status == "succeeded" {
+			// First, check if the year exists and initialize if needed
+			if _, exists := revenueData[year]; !exists {
+				revenueData[year] = make(map[string]int64)
+			}
+			revenueData[year][month] = revenueData[year][month] + payment.Amount
 		}
 	}
 
@@ -410,5 +417,5 @@ func handlePaymentList(c echo.Context) error {
 		})
 	}
 
-	return c.JSON(http.StatusOK, paymentData)
+	return c.JSON(http.StatusOK, revenueData)
 }
